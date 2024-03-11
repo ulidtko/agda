@@ -26,14 +26,22 @@ main = defaultMainWithHooks userhooks
 
 userhooks :: UserHooks
 userhooks = simpleUserHooks
-  { copyHook  = copyHook'
+  { postCopy  = postCopy'
   , instHook  = instHook'
   }
 
 -- Install and copy hooks are default, but amended with .agdai files in data-files.
 instHook' :: PackageDescription -> LocalBuildInfo -> UserHooks -> InstallFlags -> IO ()
 instHook' pd lbi hooks flags = instHook simpleUserHooks pd' lbi hooks flags where
-  pd' = pd { dataFiles = concatMap (expandAgdaExt pd) $ dataFiles pd }
+  pd' = addAgdaI pd
+
+postCopy' :: Args -> CopyFlags -> PackageDescription -> LocalBuildInfo -> IO ()
+postCopy' _ flags pd lbi = do
+  unless (skipInterfaces lbi) $ do
+    -- Generate .agdai files.
+    generateInterfaces pd lbi
+    -- Copy again, now including the .agdai files.
+    copyHook simpleUserHooks (addAgdaI pd) lbi simpleUserHooks flags
 
 -- Andreas, 2020-04-25, issue #4569: defer 'generateInterface' until after
 -- the library has been copied to a destination where it can be found.
@@ -48,8 +56,7 @@ copyHook' pd lbi hooks flags = do
     -- Copy again, now including the .agdai files.
     copyHook simpleUserHooks pd' lbi hooks flags
   where
-  pd' = pd
-    { dataFiles = concatMap (expandAgdaExt pd) $ dataFiles pd
+  pd' = addAgdaI pd
       -- Andreas, 2020-04-25, issue #4569:
       -- I tried clearing some fields to avoid copying again.
       -- However, cabal does not like me messing with the PackageDescription.
@@ -64,12 +71,15 @@ copyHook' pd lbi hooks flags = do
     -- , extraSrcFiles = []
     -- , extraTmpFiles = []
     -- , extraDocFiles = []
-    }
 
 -- Used to add .agdai files to data-files
 expandAgdaExt :: PackageDescription -> FilePath -> [FilePath]
 expandAgdaExt pd fp | takeExtension fp == ".agda" = [ fp, toIFile pd fp ]
                     | otherwise                   = [ fp ]
+
+-- Add .agdai to every .agda in a PackageDescription's data-files
+addAgdaI :: PackageDescription -> PackageDescription
+addAgdaI pd = pd { dataFiles = concatMap (expandAgdaExt pd) $ dataFiles pd }
 
 version :: PackageDescription -> String
 version = intercalate "." . map show . versionNumbers . pkgVersion . package
